@@ -16,6 +16,8 @@ import {
   AzureRepoData,
   listBitbucketServerRepos,
   BitbucketServerRepoData,
+  BitbucketCloudRepoData,
+  listBitbucketCloudRepos,
 } from '../lib';
 
 const debug = debugLib('snyk:generate-targets-data');
@@ -39,6 +41,7 @@ const sourceGenerators = {
   [SupportedIntegrationTypesImportData.GITLAB]: listGitlabRepos,
   [SupportedIntegrationTypesImportData.AZURE_REPOS]: listAzureRepos,
   [SupportedIntegrationTypesImportData.BITBUCKET_SERVER]: listBitbucketServerRepos,
+  [SupportedIntegrationTypesImportData.BITBUCKET_CLOUD]: listBitbucketCloudRepos,
 };
 
 function validateRequiredOrgData(
@@ -90,10 +93,7 @@ export async function generateTargetsImportDataFile(
     try {
       validateRequiredOrgData(name, integrations, orgId);
       const entities: Array<
-        | GithubRepoData
-        | GitlabRepoData
-        | AzureRepoData
-        | BitbucketServerRepoData
+        GithubRepoData | GitlabRepoData | AzureRepoData | BitbucketServerRepoData | BitbucketCloudRepoData
       > = await sourceGenerators[source](topLevelEntity.name, sourceUrl!);
       entities.forEach((entity) => {
         targetsData.push({

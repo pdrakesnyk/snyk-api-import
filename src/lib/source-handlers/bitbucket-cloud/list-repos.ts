@@ -3,6 +3,8 @@ import * as debugLib from 'debug';
 import Bottleneck from 'bottleneck';
 import base64 = require('base-64');
 import { BitbucketCloudRepoData } from './types';
+import { getBitbucketCloudUsername } from './get-bitbucket-cloud-username';
+import { getBitbucketCloudPassword } from './get-bitbucket-cloud-password';
 
 const debug = debugLib('snyk:bitbucket-cloud');
 
@@ -65,3 +67,13 @@ export const fetchAllRepos = async (
 
 const sleepNow = (delay: number): unknown =>
   new Promise((resolve) => setTimeout(resolve, delay));
+
+  export async function listBitbucketCloudRepos(
+    workspace: string,
+  ): Promise<BitbucketCloudRepoData[]> {
+    const bitbucketCloudUsername = getBitbucketCloudUsername();
+    const bitbucketCloudPassword = getBitbucketCloudPassword();
+    debug(`Fetching all repos data for org: ${workspace}`);
+    const repoList = await fetchAllRepos(workspace, bitbucketCloudUsername, bitbucketCloudPassword);
+    return repoList;
+  }

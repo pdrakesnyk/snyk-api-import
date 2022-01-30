@@ -6,7 +6,7 @@ import { BitbucketCloudWorkspaceData } from './types';
 import { getBitbucketCloudUsername } from './get-bitbucket-cloud-username';
 import { getBitbucketCloudPassword } from './get-bitbucket-cloud-password';
 
-const debug = debugLib('snyk:bitbucket-server');
+const debug = debugLib('snyk:bitbucket-cloud');
 
 const limiter = new Bottleneck({
   reservoir: 1000, // initial value
@@ -30,13 +30,41 @@ export async function fetchAllWorkspaces(
   username: string,
   password: string,
 ): Promise<BitbucketCloudWorkspaceData[]> {
-  let isLastPage = false;
-  let workspaces: BitbucketCloudWorkspaceData[] = [];
+  let lastPage = false;
+  let workspacesList: BitbucketCloudWorkspaceData[] = [];
   let pageCount = 1;
-  while (!isLastPage) {
+  let nextPage = '';
+  while (!lastPage) {
     debug(`Fetching page ${pageCount}\n`);
+    try {
+      const { workspaces, next } = await getWorkspaces(
+        username,
+        password,
+        nextPage,
+      );
+      workspacesList = workspacesList.concat(workspaces);
+      next
+        ? ((lastPage = false), (nextPage = next))
+        : ((lastPage = true), (nextPage = ''));
+      pageCount++;
+    } catch (err) {
+      throw new Error(JSON.stringify(err));
+    }
+  }
+  return workspacesList;
+}
+
+export async function getWorkspaces(
+  username: string,
+  password: string,
+  nextPage: string,
+): Promise<{ workspaces: BitbucketCloudWorkspaceData[]; next: string }>  {
+  const workspaces: BitbucketCloudWorkspaceData[] = [];
+  let next = '';
+  let rateLimit = true;
+  while (rateLimit) {
     const { statusCode, body } = await limiter.schedule(() =>
-      needle('get', `https://bitbucket.org/api/2.0/workspaces`, {
+      needle('get', nextPage != '' ? nextPage : `https://bitbucket.org/api/2.0/workspaces`, {
         headers: {
           Authorization: 'Basic ' + base64.encode(username + ':' + password),
         },
@@ -48,20 +76,25 @@ export async function fetchAllWorkspaces(
           `Failed to fetch page: https://bitbucket.org/api/2.0/workspaces\n, Response Status: ${body}\nToo many requests \nWaiting for 3 minutes before resuming`,
         );
         await sleepNow(180000);
-        isLastPage = false;
+        rateLimit = true;
       } else {
-        debug(
+        throw new Error(
           `Failed to fetch page: https://bitbucket.org/api/2.0/workspaces\n, Response Status: ${statusCode}\nResponse Status Text: ${body} `,
         );
       }
     }
-    const apiResponse = body['values'];
-    workspaces = workspaces.concat(apiResponse);
-    const next = body['next'];
-    next ? (isLastPage = false) : (isLastPage = true);
-    pageCount++;
+    rateLimit = false;
+    const values = body['values'];
+    next = body['next'];
+    for (const workspace of values) {
+      workspaces.push({
+        name: workspace.slug,
+        slug: workspace.slug,
+        uuid: workspace.uuid,
+      })
+    }
   }
-  return workspaces;
+  return { workspaces, next };
 }
 
 const sleepNow = (delay: number): unknown =>
@@ -72,7 +105,7 @@ export async function listBitbucketCloudWorkspaces(): Promise<
 > {
   const bitbucketCloudUsername = getBitbucketCloudUsername();
   const bitbucketCloudPassword = getBitbucketCloudPassword();
-  debug(`Fetching all projects data`);
+  debug(`Fetching all workspaces data`);
   const workspaces = await fetchAllWorkspaces(
     bitbucketCloudUsername,
     bitbucketCloudPassword,

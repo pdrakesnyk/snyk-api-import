@@ -18,30 +18,67 @@ const limiter = new Bottleneck({
 
 limiter.on('failed', async (error, jobInfo) => {
   const id = jobInfo.options.id;
-  console.warn(`Job ${id} failed: ${error}`);
+  debug(`Job ${id} failed: ${error}`);
   if (jobInfo.retryCount === 0) {
     // Here we only retry once
-    console.log(`Retrying job ${id} in 25ms!`);
+    debug(`Retrying job ${id} in 25ms!`);
     return 25;
   }
 });
 
-export const fetchAllRepos = async (
+export const fetchAllBitbucketcloudRepos = async (
   workspace: string,
   username: string,
   password: string,
 ): Promise<BitbucketCloudRepoData[]> => {
-  let isLastPage = false;
-  let repos: BitbucketCloudRepoData[] = [];
+  let lastPage = false;
+  let reposList: BitbucketCloudRepoData[] = [];
   let pageCount = 1;
-  while (!isLastPage) {
+  let nextPage = '';
+  while (!lastPage) {
     debug(`Fetching page ${pageCount} for ${workspace}\n`);
+    try {
+      const { repos, next } = await getRepos(
+        workspace,
+        username,
+        password,
+        nextPage,
+      );
+
+      reposList = reposList.concat(repos);
+      next
+        ? ((lastPage = false), (nextPage = next))
+        : ((lastPage = true), (nextPage = ''));
+      pageCount++;
+    } catch (err) {
+      throw new Error(JSON.stringify(err));
+    }
+  }
+  return reposList;
+};
+
+const getRepos = async (
+  workspace: string,
+  username: string,
+  password: string,
+  nextPage: string,
+): Promise<{ repos: BitbucketCloudRepoData[]; next: string; }> => {
+  const repos: BitbucketCloudRepoData[] = [];
+  let next = '';
+  let rateLimit = true;
+  while (rateLimit) {
     const { statusCode, body } = await limiter.schedule(() =>
-      needle('get', `https://bitbucket.org/api/2.0/repositories/${workspace}`, {
-        headers: {
-          Authorization: 'Basic ' + base64.encode(username + ':' + password),
+      needle(
+        'get',
+        nextPage != ''
+          ? nextPage
+          : `https://bitbucket.org/api/2.0/repositories/${workspace}`,
+        {
+          headers: {
+            Authorization: 'Basic ' + base64.encode(username + ':' + password),
+          },
         },
-      }),
+      ),
     );
     if (statusCode != 200) {
       if (statusCode == 429) {
@@ -49,31 +86,40 @@ export const fetchAllRepos = async (
           `Failed to fetch page: https://bitbucket.org/api/2.0/repositories/${workspace}\n, Response Status: ${body}\nToo many requests \nWaiting for 3 minutes before resuming`,
         );
         await sleepNow(180000);
-        isLastPage = false;
+        rateLimit = true;
       } else {
-        debug(
+        throw new Error(
           `Failed to fetch page: https://bitbucket.org/api/2.0/repositories/${workspace}\n, Response Status: ${statusCode}\nResponse Status Text: ${body} `,
         );
       }
     }
-    const apiResponse = body['values'];
-    repos = repos.concat(apiResponse);
-    const next = body['next'];
-    next ? (isLastPage = false) : (isLastPage = true);
-    pageCount++;
+    rateLimit = false;
+    const values = body['values'];
+    next = body['next'];
+    for (const repo of values) {
+      repos.push({
+        owner: repo.workspace.slug ? repo.workspace.slug : repo.workspace.uuid,
+        name: repo.slug,
+        branch: repo.mainbranch.name ? repo.mainbranch.name : '',
+      });
+    }
   }
-  return repos;
+  return { repos, next };
 };
 
 const sleepNow = (delay: number): unknown =>
   new Promise((resolve) => setTimeout(resolve, delay));
 
-  export async function listBitbucketCloudRepos(
-    workspace: string,
-  ): Promise<BitbucketCloudRepoData[]> {
-    const bitbucketCloudUsername = getBitbucketCloudUsername();
-    const bitbucketCloudPassword = getBitbucketCloudPassword();
-    debug(`Fetching all repos data for org: ${workspace}`);
-    const repoList = await fetchAllRepos(workspace, bitbucketCloudUsername, bitbucketCloudPassword);
-    return repoList;
-  }
+export async function listBitbucketCloudRepos(
+  workspace: string,
+): Promise<BitbucketCloudRepoData[]> {
+  const bitbucketCloudUsername = getBitbucketCloudUsername();
+  const bitbucketCloudPassword = getBitbucketCloudPassword();
+  debug(`Fetching all repos data for org: ${workspace}`);
+  const repoList = await fetchAllBitbucketcloudRepos(
+    workspace,
+    bitbucketCloudUsername,
+    bitbucketCloudPassword,
+  );
+  return repoList;
+}

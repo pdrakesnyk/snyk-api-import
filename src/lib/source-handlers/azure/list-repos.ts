@@ -3,9 +3,10 @@ import Bottleneck from 'bottleneck';
 import base64 = require('base-64');
 import * as debugLib from 'debug';
 import { getAzureToken } from './get-azure-token';
-import * as needle from 'needle';
 import { listAzureProjects } from './list-projects';
 import { getBaseUrl } from './get-base-url';
+import { requestWithRateLimitRetries } from '../../request-with-rate-limit';
+import { OutgoingHttpHeaders } from 'http2';
 
 const debug = debugLib('snyk:azure');
 
@@ -47,22 +48,16 @@ async function getRepos(
   token: string,
 ): Promise<AzureRepoData[]> {
   const repoList: AzureRepoData[] = [];
-  const data = await limiter.schedule(() =>
-    needle(
-      'get',
-      `${url}/${orgName}/` +
-        encodeURIComponent(project) +
-        '/_apis/git/repositories?api-version=4.1',
-      {
-        headers: { Authorization: `Basic ${base64.encode(':' + token)}` },
-      },
-    ),
+  const headers: OutgoingHttpHeaders = { Authorization: `Basic ${base64.encode(':' + token)}` }
+  const data = await requestWithRateLimitRetries(
+    'get',
+    `${url}/${orgName}/` +
+      encodeURIComponent(project) +
+      '/_apis/git/repositories?api-version=4.1',
+      headers,
+    limiter
   );
-  if (data.statusCode != 200) {
-    new Error(`Failed to fetch page: ${url}\n${data.body}`);
-  }
   const repos = data.body['value'];
-
   repos.map(
     (repo: {
       name: string;

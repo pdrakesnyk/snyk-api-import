@@ -1,12 +1,13 @@
 import * as qs from 'querystring';
 import base64 = require('base-64');
 import Bottleneck from 'bottleneck';
-import * as needle from 'needle';
 import * as debugLib from 'debug';
 import { AzureProjectData } from './types';
 import { getAzureToken } from './get-azure-token';
 import { getBaseUrl } from './get-base-url';
 import { AzureProjectData as Project } from './types';
+import { requestWithRateLimitRetries } from '../../request-with-rate-limit'
+import { OutgoingHttpHeaders } from 'http2';
 
 const debug = debugLib('snyk:azure');
 
@@ -75,18 +76,13 @@ async function getProjects(
     'api-version': '4.1',
   };
   const query = qs.stringify(params);
-  const data = await limiter.schedule(() =>
-    needle(
-      'get',
-      `${host}/${orgName}/_apis/projects?${query}`, //document the version somewhere
-      {
-        headers: { Authorization: 'Basic ' + base64.encode(':' + azureToken) },
-      },
-    ),
+  const headers: OutgoingHttpHeaders = { Authorization: `Basic ${base64.encode(':' + azureToken)}` }
+  const data = await requestWithRateLimitRetries(
+    'get',
+    `${host}/${orgName}/_apis/projects?${query}`,
+    headers,
+    limiter
   );
-  if (data.statusCode != 200) {
-    throw new Error(`Failed to fetch page: ${host}\n${data.body}`);
-  }
   const { value: projects } = data.body;
   return {
     projects,
